@@ -6,6 +6,7 @@ from mitmproxy import flow
 from mitmproxy import flowfilter
 from mitmproxy import http
 from mitmproxy import tcp
+from mitmproxy import udp
 from mitmproxy import websocket
 
 from mitmproxy.io import compat
@@ -15,6 +16,7 @@ FLOW_TYPES: Dict[str, Type[flow.Flow]] = dict(
     http=http.HTTPFlow,
     websocket=websocket.WebSocketFlow,
     tcp=tcp.TCPFlow,
+    udp=udp.UDPFlow,
 )
 
 

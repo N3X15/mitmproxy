@@ -10,6 +10,7 @@ from mitmproxy import flow
 from mitmproxy import http
 from mitmproxy import log
 from mitmproxy import tcp
+from mitmproxy import udp
 from mitmproxy.tools.console import keymap
 from mitmproxy.tools.console import overlay
 from mitmproxy.tools.console import signals
@@ -340,7 +341,7 @@ class ConsoleAddon:
     @command.command("console.view.flow")
     def view_flow(self, flow: flow.Flow) -> None:
         """View a flow."""
-        if isinstance(flow, (http.HTTPFlow, tcp.TCPFlow)):
+        if isinstance(flow, (http.HTTPFlow, tcp.TCPFlow, udp.UDPFlow)):
             self.master.switch_view("flowview")
         else:
             ctx.log.warn(f"No detail view for {type(flow).__name__}.")
@@ -393,6 +394,8 @@ class ConsoleAddon:
 
         if type(flow) == tcp.TCPFlow:
             focus_options = ["tcp-message"]
+        elif type(flow) == udp.UDPFlow:
+            focus_options = ["udp-message"]
         elif type(flow) == http.HTTPFlow:
             focus_options = [
                 "cookies",

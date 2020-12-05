@@ -67,7 +67,7 @@ class FlowDetails(tabs.Tabs):
                     (self.tab_http_response, self.view_response),
                     (self.tab_details, self.view_details),
                 ]
-            elif isinstance(self.flow, tcp.TCPFlow):
+            elif isinstance(self.flow, (tcp.TCPFlow, udp.UDPFlow)):
                 self.tabs = [
                     (self.tab_tcp_stream, self.view_tcp_stream),
                     (self.tab_details, self.view_details),
@@ -130,7 +130,7 @@ class FlowDetails(tabs.Tabs):
 
     def view_tcp_stream(self) -> urwid.Widget:
         flow = self.flow
-        assert isinstance(flow, tcp.TCPFlow)
+        assert isinstance(flow, (tcp.TCPFlow, udp.UDPFlow))
 
         if not flow.messages:
             return searchable.Searchable([urwid.Text(("highlight", "No messages."))])

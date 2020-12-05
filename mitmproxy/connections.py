@@ -7,12 +7,13 @@ from mitmproxy import certs
 from mitmproxy import exceptions
 from mitmproxy import stateobject
 from mitmproxy.net import tcp
+from mitmproxy.net import udp
 from mitmproxy.net import tls
 from mitmproxy.utils import human
 from mitmproxy.utils import strutils
 
 
-class ClientConnection(tcp.BaseHandler, stateobject.StateObject):
+class TCPClientConnection(tcp.BaseHandler, stateobject.StateObject):
     """
     A client connection
 
@@ -72,7 +73,7 @@ class ClientConnection(tcp.BaseHandler, stateobject.StateObject):
         else:
             alpn = ""
 
-        return "<ClientConnection: {tls}{alpn}{address}>".format(
+        return "<TCPClientConnection: {tls}{alpn}{address}>".format(
             tls=tls,
             alpn=alpn,
             address=human.format_address(self.address),
@@ -158,8 +159,7 @@ class ClientConnection(tcp.BaseHandler, stateobject.StateObject):
         super().finish()
         self.timestamp_end = time.time()
 
-
-class ServerConnection(tcp.TCPClient, stateobject.StateObject):
+class TCPServerConnection(tcp.TCPClient, stateobject.StateObject):
     """
     A server connection
 
@@ -207,7 +207,7 @@ class ServerConnection(tcp.TCPClient, stateobject.StateObject):
             )
         else:
             alpn = ""
-        return "<ServerConnection: {tls}{alpn}{address}>".format(
+        return "<TCPServerConnection: {tls}{alpn}{address}>".format(
             tls=tls,
             alpn=alpn,
             address=human.format_address(self.address),
@@ -299,5 +299,154 @@ class ServerConnection(tcp.TCPClient, stateobject.StateObject):
         tcp.TCPClient.finish(self)
         self.timestamp_end = time.time()
 
+class UDPClientConnection(udp.BaseHandler, stateobject.StateObject):
+    """
+    A client connection
 
-ServerConnection._stateobject_attributes["via"] = ServerConnection
+    Attributes:
+        address: Remote address
+        timestamp_start: Connection start timestamp
+        timestamp_end: Connection end timestamp
+    """
+
+    def __init__(self, client_connection, address, server):
+        # Eventually, this object is restored from state. We don't have a
+        # connection then.
+        if client_connection:
+            super().__init__(client_connection, address, server)
+        else:
+            self.connection = None
+            self.server = None
+            self.wfile = None
+            self.rfile = None
+            self.address = None
+
+        self.id = str(uuid.uuid4())
+        self.timestamp_start = time.time()
+        self.timestamp_end = None
+
+    def connected(self):
+        return bool(self.connection) and not self.finished
+
+    def __repr__(self):
+        return f"<UDPClientConnection: {human.format_address(self.address)}>"
+
+    def __eq__(self, other):
+        if isinstance(other, ClientConnection):
+            return self.id == other.id
+        return False
+
+    def __hash__(self):
+        return hash(self.id)
+
+    _stateobject_attributes = dict(
+        id=str,
+        address=tuple,
+        timestamp_start=float,
+        timestamp_end=float,
+    )
+
+    def send(self, message):
+        if isinstance(message, list):
+            message = b''.join(message)
+        self.wfile.write(message)
+        self.wfile.flush()
+
+    @classmethod
+    def from_state(cls, state):
+        f = cls(None, tuple(), None)
+        f.set_state(state)
+        return f
+
+    @classmethod
+    def make_dummy(cls, address):
+        return cls.from_state(dict(
+            id=str(uuid.uuid4()),
+            address=address,
+            timestamp_start=None,
+            timestamp_end=None,
+        ))
+
+    def finish(self):
+        super().finish()
+        self.timestamp_end = time.time()
+
+class UDPServerConnection(udp.UDPClient, stateobject.StateObject):
+    """
+    A server connection
+
+    Attributes:
+        address: Remote address. Can be both a domain or an IP address.
+        ip_address: Resolved remote IP address.
+        source_address: Local IP address or client's source IP address.
+        via: The underlying server connection (e.g. the connection to the upstream proxy in upstream proxy mode)
+        timestamp_start: Connection start timestamp
+        timestamp_end: Connection end timestamp
+    """
+
+    def __init__(self, address, source_address=None, spoof_source_address=None):
+        udp.UDPClient.__init__(self, address, source_address, spoof_source_address)
+
+        self.id = str(uuid.uuid4())
+        self.via = None
+        self.timestamp_start = None
+        self.timestamp_end = None
+
+    def connected(self):
+        return bool(self.connection) and not self.finished
+
+    def __repr__(self):
+        return f"<UDPServerConnection: {human.format_address(self.address)}>"
+
+    def __eq__(self, other):
+        if isinstance(other, ServerConnection):
+            return self.id == other.id
+        return False
+
+    def __hash__(self):
+        return hash(self.id)
+
+    _stateobject_attributes = dict(
+        id=str,
+        address=tuple,
+        ip_address=tuple,
+        source_address=tuple,
+        timestamp_start=float,
+        timestamp_end=float,
+    )
+
+    @classmethod
+    def from_state(cls, state):
+        f = cls(tuple())
+        f.set_state(state)
+        return f
+
+    @classmethod
+    def make_dummy(cls, address):
+        return cls.from_state(dict(
+            id=str(uuid.uuid4()),
+            address=address,
+            ip_address=address,
+            source_address=('', 0),
+            timestamp_start=None,
+            timestamp_end=None,
+            via=None
+        ))
+
+    def connect(self):
+        self.timestamp_start = time.time()
+        udp.UDPClient.connect(self)
+
+    def send(self, message):
+        if isinstance(message, list):
+            message = b''.join(message)
+        self.wfile.write(message)
+        self.wfile.flush()
+
+    def finish(self):
+        udp.UDPClient.finish(self)
+        self.timestamp_end = time.time()
+
+
+TCPServerConnection._stateobject_attributes["via"] = TCPServerConnection
+UDPServerConnection._stateobject_attributes["via"] = UDPServerConnection

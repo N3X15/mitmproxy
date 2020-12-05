@@ -4,6 +4,7 @@ from mitmproxy import controller
 from mitmproxy import flow
 from mitmproxy import http
 from mitmproxy import tcp
+from mitmproxy import udp
 from mitmproxy import websocket
 
 Events = frozenset([
@@ -16,6 +17,11 @@ Events = frozenset([
     "tcp_message",
     "tcp_error",
     "tcp_end",
+    # TCP
+    "udp_start",
+    "udp_message",
+    "udp_error",
+    "udp_end",
     # HTTP
     "http_connect",
     "request",
@@ -78,11 +84,24 @@ def _iterate_tcp(f: tcp.TCPFlow) -> TEventGenerator:
         yield "tcp_error", f
     yield "tcp_end", f
 
+def _iterate_udp(f: tcp.UDPFlow) -> TEventGenerator:
+    messages = f.messages
+    f.messages = []
+    f.reply = controller.DummyReply()
+    yield "udp_start", f
+    while messages:
+        f.messages.append(messages.pop(0))
+        yield "udp_message", f
+    if f.error:
+        yield "udp_error", f
+    yield "udp_end", f
+
 
 _iterate_map: typing.Dict[typing.Type[flow.Flow], typing.Callable[[typing.Any], TEventGenerator]] = {
     http.HTTPFlow: _iterate_http,
     websocket.WebSocketFlow: _iterate_websocket,
     tcp.TCPFlow: _iterate_tcp,
+    udp.UDPFlow: _iterate_udp,
 }
 
 

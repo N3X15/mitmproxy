@@ -165,6 +165,22 @@ class TcpTimeout(TcpException):
     pass
 
 
+class UdpException(NetlibException):
+    pass
+
+
+class UdpDisconnect(TcpException, Disconnect):
+    pass
+
+
+class UdpReadIncomplete(TcpException):
+    pass
+
+
+class UdpTimeout(TcpException):
+    pass
+
+
 class TlsException(NetlibException):
     pass
 

@@ -39,7 +39,7 @@ from typing import Callable, ClassVar, Optional, Sequence, Type
 
 import pyparsing as pp
 
-from mitmproxy import flow, http, tcp, websocket
+from mitmproxy import flow, http, tcp, websocket, udp
 from mitmproxy.net.websocket import check_handshake
 
 
@@ -118,6 +118,14 @@ class FTCP(_Action):
     help = "Match TCP flows"
 
     @only(tcp.TCPFlow)
+    def __call__(self, f):
+        return True
+
+class FUDP(_Action):
+    code = "udp"
+    help = "Match UDP flows"
+
+    @only(tcp.UDPFlow)
     def __call__(self, f):
         return True
 
@@ -258,7 +266,7 @@ class FBod(_Rex):
     help = "Body"
     flags = re.DOTALL
 
-    @only(http.HTTPFlow, websocket.WebSocketFlow, tcp.TCPFlow)
+    @only(http.HTTPFlow, websocket.WebSocketFlow, tcp.TCPFlow, udp.UDPFlow)
     def __call__(self, f):
         if isinstance(f, http.HTTPFlow):
             if f.request and f.request.raw_content:
@@ -267,7 +275,7 @@ class FBod(_Rex):
             if f.response and f.response.raw_content:
                 if self.re.search(f.response.get_content(strict=False)):
                     return True
-        elif isinstance(f, websocket.WebSocketFlow) or isinstance(f, tcp.TCPFlow):
+        elif isinstance(f, websocket.WebSocketFlow) or isinstance(f, tcp.TCPFlow) or isinstance(f, udp.UDPFlow):
             for msg in f.messages:
                 if self.re.search(msg.content):
                     return True
@@ -279,13 +287,13 @@ class FBodRequest(_Rex):
     help = "Request body"
     flags = re.DOTALL
 
-    @only(http.HTTPFlow, websocket.WebSocketFlow, tcp.TCPFlow)
+    @only(http.HTTPFlow, websocket.WebSocketFlow, tcp.TCPFlow, udp.UDPFlow)
     def __call__(self, f):
         if isinstance(f, http.HTTPFlow):
             if f.request and f.request.raw_content:
                 if self.re.search(f.request.get_content(strict=False)):
                     return True
-        elif isinstance(f, websocket.WebSocketFlow) or isinstance(f, tcp.TCPFlow):
+        elif isinstance(f, websocket.WebSocketFlow) or isinstance(f, tcp.TCPFlow) or isinstance(f, udp.UDPFlow):
             for msg in f.messages:
                 if msg.from_client and self.re.search(msg.content):
                     return True
@@ -296,13 +304,13 @@ class FBodResponse(_Rex):
     help = "Response body"
     flags = re.DOTALL
 
-    @only(http.HTTPFlow, websocket.WebSocketFlow, tcp.TCPFlow)
+    @only(http.HTTPFlow, websocket.WebSocketFlow, tcp.TCPFlow, udp.UDPFlow)
     def __call__(self, f):
         if isinstance(f, http.HTTPFlow):
             if f.response and f.response.raw_content:
                 if self.re.search(f.response.get_content(strict=False)):
                     return True
-        elif isinstance(f, websocket.WebSocketFlow) or isinstance(f, tcp.TCPFlow):
+        elif isinstance(f, websocket.WebSocketFlow) or isinstance(f, tcp.TCPFlow) or isinstance(f, udp.UDPFlow):
             for msg in f.messages:
                 if not msg.from_client and self.re.search(msg.content):
                     return True
@@ -445,6 +453,7 @@ filter_unary: Sequence[Type[_Action]] = [
     FReq,
     FResp,
     FTCP,
+    FUDP,
     FWebSocket,
 ]
 filter_rex: Sequence[Type[_Rex]] = [

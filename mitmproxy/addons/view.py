@@ -23,6 +23,7 @@ from mitmproxy import ctx
 from mitmproxy import io
 from mitmproxy import http
 from mitmproxy import tcp
+from mitmproxy import udp
 from mitmproxy.utils import human
 
 
@@ -81,6 +82,8 @@ class OrderRequestMethod(_OrderKey):
             return f.request.method
         elif isinstance(f, tcp.TCPFlow):
             return "TCP"
+        elif isinstance(f, udp.UDPFlow):
+            return "UDP"
         else:
             raise NotImplementedError()
 
@@ -89,7 +92,7 @@ class OrderRequestURL(_OrderKey):
     def generate(self, f: mitmproxy.flow.Flow) -> str:
         if isinstance(f, http.HTTPFlow):
             return f.request.url
-        elif isinstance(f, tcp.TCPFlow):
+        elif isinstance(f, (tcp.TCPFlow, udp.UDPFlow)):
             return human.format_address(f.server_conn.address)
         else:
             raise NotImplementedError()
@@ -104,7 +107,7 @@ class OrderKeySize(_OrderKey):
             if f.response and f.response.raw_content:
                 size += len(f.response.raw_content)
             return size
-        elif isinstance(f, tcp.TCPFlow):
+        elif isinstance(f, (tcp.TCPFlow, udp.UDPFlow)):
             size = 0
             for message in f.messages:
                 size += len(message.content)
@@ -113,7 +116,7 @@ class OrderKeySize(_OrderKey):
             raise NotImplementedError()
 
 
-matchall = flowfilter.parse("~http | ~tcp")
+matchall = flowfilter.parse("~http | ~tcp | ~udp")
 
 orders = [
     ("t", "time"),

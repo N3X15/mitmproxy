@@ -12,6 +12,7 @@ from mitmproxy import flow
 from mitmproxy.http import HTTPFlow
 from mitmproxy.utils import human
 from mitmproxy.tcp import TCPFlow
+from mitmproxy.udp import UDPFlow
 
 # Detect Windows Subsystem for Linux
 IS_WSL = "Microsoft" in platform.platform()
@@ -635,6 +636,60 @@ def format_tcp_flow(
         urwid.Columns(items, dividechars=1, min_width=15)
     ])
 
+@lru_cache(maxsize=800)
+def format_udp_flow(
+        *,
+        render_mode: RenderMode,
+        focused: bool,
+        timestamp_start: float,
+        marked: bool,
+        client_address,
+        server_address,
+        total_size: int,
+        duration: typing.Optional[float],
+        error_message: typing.Optional[str],
+):
+    conn = f"{human.format_address(client_address)} <-> {human.format_address(server_address)}"
+
+    items = []
+
+    if render_mode in (RenderMode.TABLE, RenderMode.DETAILVIEW):
+        items.append(
+            format_left_indicators(focused=focused, intercepted=False, timestamp=timestamp_start)
+        )
+    else:
+        if focused:
+            items.append(fcol(">>", "focus"))
+        else:
+            items.append(fcol("  ", "focus"))
+
+    if render_mode is RenderMode.TABLE:
+        items.append(fcol("UDP  ", SCHEME_STYLES["tcp"]))
+    else:
+        items.append(fcol("UDP", SCHEME_STYLES["tcp"]))
+
+    items.append(('weight', 1.0, truncated_plain(conn, "text", 'left')))
+    if error_message:
+        items.append(('weight', 1.0, truncated_plain(error_message, "error", 'left')))
+
+    if total_size:
+        size, size_style = format_size(total_size)
+        items.append(fcol(fixlen_r(size, 5), size_style))
+    else:
+        items.append(("fixed", 5, urwid.Text("")))
+
+    if duration:
+        duration_pretty, duration_style = format_duration(duration)
+        items.append(fcol(fixlen_r(duration_pretty, 5), duration_style))
+    else:
+        items.append(("fixed", 5, urwid.Text("")))
+
+    items.append(format_right_indicators(replay=False, marked=marked))
+
+    return urwid.Pile([
+        urwid.Columns(items, dividechars=1, min_width=15)
+    ])
+
 
 def format_flow(
         f: flow.Flow,
@@ -665,6 +720,25 @@ def format_flow(
         else:
             duration = None
         return format_tcp_flow(
+            render_mode=render_mode,
+            focused=focused,
+            timestamp_start=f.timestamp_start,
+            marked=f.marked,
+            client_address=f.client_conn.address,
+            server_address=f.server_conn.address,
+            total_size=total_size,
+            duration=duration,
+            error_message=error_message,
+        )
+    elif isinstance(f, UDPFlow):
+        total_size = 0
+        for message in f.messages:
+            total_size += len(message.content)
+        if f.messages:
+            duration = f.messages[-1].timestamp - f.timestamp_start
+        else:
+            duration = None
+        return format_udp_flow(
             render_mode=render_mode,
             focused=focused,
             timestamp_start=f.timestamp_start,

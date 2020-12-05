@@ -67,6 +67,14 @@ class ProxyServer(tcp.TCPServer):
         )
         h.handle()
 
+class UDPInterceptor(object):
+    def __init__(self, config: config.ProxyConfig) -> None:
+        import pydivert
+        # https://pypi.org/project/pydivert/
+        rule: str = 'udp'
+        self.diverter = pydivert.WinDivert()
+
+
 
 class ConnectionHandler:
 

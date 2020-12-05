@@ -36,6 +36,7 @@ from .http1 import Http1Layer
 from .http2 import Http2Layer
 from .websocket import WebSocketLayer
 from .rawtcp import RawTCPLayer
+from .rawudp import RawUDPLayer
 from .tls import TlsLayer
 
 __all__ = [
@@ -47,4 +48,5 @@ __all__ = [
     "Http2Layer",
     "WebSocketLayer",
     "RawTCPLayer",
+    "RawUDPLayer",
 ]

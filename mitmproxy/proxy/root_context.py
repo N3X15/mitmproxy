@@ -23,10 +23,11 @@ class RootContext:
             The :py:class:`proxy server's configuration <mitmproxy.proxy.ProxyConfig>`
     """
 
-    def __init__(self, client_conn, config, channel):
+    def __init__(self, client_conn, config, channel, udp: bool=False):
         self.client_conn = client_conn
         self.channel = channel
         self.config = config
+        self.is_udp = udp
 
     def next_layer(self, top_layer):
         """
@@ -42,6 +43,9 @@ class RootContext:
         return self.channel.ask("next_layer", layer)
 
     def _next_layer(self, top_layer):
+        if self.is_udp:
+            return protocol.RawUDPLayer(top_layer)
+            
         try:
             d = top_layer.client_conn.rfile.peek(3)
         except exceptions.TcpException as e:

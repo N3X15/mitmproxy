@@ -18,7 +18,8 @@ import pydivert
 import pydivert.consts
 
 REDIRECT_API_HOST = "127.0.0.1"
-REDIRECT_API_PORT = 8085
+REDIRECT_API_TCP_PORT = 8085
+REDIRECT_API_UDP_PORT = 8086
 
 
 ##########################
@@ -95,7 +96,14 @@ class APIRequestHandler(socketserver.StreamRequestHandler):
             pass
 
 
-class APIServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+class APITcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+
+    def __init__(self, proxifier, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.proxifier = proxifier
+        self.daemon_threads = True
+
+class APIUdpServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
 
     def __init__(self, proxifier, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -407,14 +415,19 @@ class TransparentProxy:
     192.168.0.42:4242 simultaneously. This could be mitigated by introducing unique "meta-addresses"
     which mitmproxy sees, but this would remove the correct client info from mitmproxy.
     """
-    local: typing.Optional[RedirectLocal] = None
+    local_tcp: typing.Optional[RedirectLocal] = None
+    local_udp: typing.Optional[RedirectLocal] = None
     # really weird linting error here.
-    forward: typing.Optional[Redirect] = None  # noqa
-    response: Redirect
+    forward_tcp: typing.Optional[Redirect] = None  # noqa
+    forward_udp: typing.Optional[Redirect] = None  # noqa
+    response_tcp: Redirect
+    response_udp: Redirect
     icmp: Redirect
 
-    proxy_port: int
-    filter: str
+    proxy_tcp_port: int
+    proxy_udp_port: int
+    tcp_filter: str
+    udp_filter: str
 
     client_server_map: ClientServerMap
 
@@ -422,14 +435,22 @@ class TransparentProxy:
         self,
         local: bool = True,
         forward: bool = True,
-        proxy_port: int = 8080,
-        filter: typing.Optional[str] = "tcp.DstPort == 80 or tcp.DstPort == 443",
+        proxy_tcp_port: int = 8080,
+        proxy_udp_port: int = 0,
+        tcp_filter: typing.Optional[str] = "tcp.DstPort == 80 or tcp.DstPort == 443",
+        udp_filter: typing.Optional[str] = "udp",
     ) -> None:
-        self.proxy_port = proxy_port
-        self.filter = (
-            filter
+        self.proxy_tcp_port = proxy_tcp_port
+        self.proxy_udp_port = proxy_udp_port
+        self.tcp_filter = (
+            tcp_filter
             or
-            f"tcp.DstPort != {proxy_port} and tcp.DstPort != {REDIRECT_API_PORT} and tcp.DstPort < 49152"
+            f"tcp.DstPort != {proxy_tcp_port} and tcp.DstPort != {REDIRECT_API_TCP_PORT} and tcp.DstPort < 49152"
+        )
+        self.udp_filter = (
+            udp_filter
+            or
+            f'udp.DstPort != {proxy_udp_port} and udp.DstPort != {REDIRECT_API_UDP_PORT} and udp.DstPort < 49152'
         )
 
         self.ipv4_address = get_local_ip()
@@ -437,27 +458,44 @@ class TransparentProxy:
         # print(f"IPv4: {self.ipv4_address}, IPv6: {self.ipv6_address}")
         self.client_server_map = ClientServerMap()
 
-        self.api = APIServer(self, (REDIRECT_API_HOST, REDIRECT_API_PORT), APIRequestHandler)
-        self.api_thread = threading.Thread(target=self.api.serve_forever)
-        self.api_thread.daemon = True
+        self.tcp_api = APITcpServer(self, (REDIRECT_API_HOST, REDIRECT_TCP_API_PORT), APIRequestHandler)
+        self.tcp_api_thread = threading.Thread(target=self.tcp_api.serve_forever)
+        self.tcp_api_thread.daemon = True
+
+        self.udp_api = APIUdpServer(self, (REDIRECT_API_HOST, REDIRECT_UDP_API_PORT), APIRequestHandler)
+        self.udp_api_thread = threading.Thread(target=self.udp_api.serve_forever)
+        self.udp_api_thread.daemon = True
 
         if forward:
-            self.forward = Redirect(
-                self.redirect_request,
-                self.filter,
+            self.forward_tcp = Redirect(
+                self.redirect_tcp_request,
+                self.filter_tcp,
+                pydivert.Layer.NETWORK_FORWARD
+            )
+            self.forward_udp = Redirect(
+                self.redirect_udp_request,
+                self.filter_udp,
                 pydivert.Layer.NETWORK_FORWARD
             )
         if local:
-            self.local = RedirectLocal(
-                self.redirect_request,
-                self.filter
+            self.local_tcp = RedirectLocal(
+                self.redirect_tcp_request,
+                self.filter_tcp
+            )
+            self.local_udp = RedirectLocal(
+                self.redirect_udp_request,
+                self.filter_udp
             )
 
         # The proxy server responds to the client. To the client,
         # this response should look like it has been sent by the real target
-        self.response = Redirect(
-            self.redirect_response,
-            f"outbound and tcp.SrcPort == {proxy_port}",
+        self.response_tcp = Redirect(
+            self.redirect_tcp_response,
+            f"outbound and tcp.SrcPort == {proxy_tcp_port}",
+        )
+        self.response_udp = Redirect(
+            self.redirect_udp_response,
+            f"outbound and udp.SrcPort == {proxy_udp_port}",
         )
 
         # Block all ICMP requests (which are sent on Windows by default).
@@ -475,30 +513,45 @@ class TransparentProxy:
         # TODO: Make sure that server can be killed cleanly. That's a bit difficult as we don't have access to
         # controller.should_exit when this is called.
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server_unavailable = s.connect_ex((REDIRECT_API_HOST, REDIRECT_API_PORT))
+        server_unavailable = s.connect_ex((REDIRECT_API_HOST, REDIRECT_API_TCP_PORT))
         if server_unavailable:
-            proxifier = TransparentProxy()
-            proxifier.start()
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            server_unavailable = s.connect_ex((REDIRECT_API_HOST, REDIRECT_API_UDP_PORT))
+            if server_unavailable:
+                proxifier = TransparentProxy()
+                proxifier.start()
 
     def start(self):
-        self.api_thread.start()
+        self.api_tcp_thread.start()
+        self.api_udp_thread.start()
         self.icmp.start()
-        self.response.start()
-        if self.forward:
-            self.forward.start()
-        if self.local:
-            self.local.start()
+        self.response_tcp.start()
+        self.response_udp.start()
+        if self.forward_tcp:
+            self.forward_tcp.start()
+        if self.forward_udp:
+            self.forward_udp.start()
+        if self.local_tcp:
+            self.local_tcp.start()
+        if self.local_udp:
+            self.local_udp.start()
 
     def shutdown(self):
-        if self.local:
-            self.local.shutdown()
-        if self.forward:
-            self.forward.shutdown()
-        self.response.shutdown()
+        if self.local_tcp:
+            self.local_tcp.shutdown()
+        if self.local_udp:
+            self.local_udp.shutdown()
+        if self.forward_tcp:
+            self.forward_tcp.shutdown()
+        if self.forward_udp:
+            self.forward_udp.shutdown()
+        self.response_tcp.shutdown()
+        self.response_udp.shutdown()
         self.icmp.shutdown()
-        self.api.shutdown()
+        self.api_tcp.shutdown()
+        self.api_udp.shutdown()
 
-    def redirect_request(self, packet: pydivert.Packet):
+    def redirect_tcp_request(self, packet: pydivert.Packet):
         # print(" * Redirect client -> server to proxy")
         # print(f"{packet.src_addr}:{packet.src_port} -> {packet.dst_addr}:{packet.dst_port}")
         client = (packet.src_addr, packet.src_port)
@@ -523,7 +576,49 @@ class TransparentProxy:
         # so we use the response handle.
         self.response.windivert.send(packet)
 
-    def redirect_response(self, packet: pydivert.Packet):
+    def redirect_udp_request(self, packet: pydivert.Packet):
+        # Probably didn't need to duplicate this, since it works on the IP layer, but just in case... - N3X
+        # print(" * Redirect client -> server to proxy")
+        # print(f"{packet.src_addr}:{packet.src_port} -> {packet.dst_addr}:{packet.dst_port}")
+        client = (packet.src_addr, packet.src_port)
+
+        self.client_server_map[client] = (packet.dst_addr, packet.dst_port)
+
+        # We do need to inject to an external IP here, 127.0.0.1 does not work.
+        if packet.address_family == socket.AF_INET:
+            assert self.ipv4_address
+            packet.dst_addr = self.ipv4_address
+        elif packet.address_family == socket.AF_INET6:
+            if not self.ipv6_address:
+                self.ipv6_address = get_local_ip6(packet.src_addr)
+            assert self.ipv6_address
+            packet.dst_addr = self.ipv6_address
+        else:
+            raise RuntimeError("Unknown address family")
+        packet.dst_port = self.proxy_port
+        packet.direction = pydivert.consts.Direction.INBOUND
+
+        # We need a handle on the NETWORK layer. the local handle is not guaranteed to exist,
+        # so we use the response handle.
+        self.response.windivert.send(packet)
+
+    def redirect_tcp_response(self, packet: pydivert.Packet):
+        """
+        If the proxy responds to the client, let the client believe the target server sent the
+        packets.
+        """
+        # print(" * Adjust proxy -> client")
+        client = (packet.dst_addr, packet.dst_port)
+        try:
+            packet.src_addr, packet.src_port = self.client_server_map[client]
+        except KeyError:
+            print(f"Warning: Previously unseen connection from proxy to {client}")
+        else:
+            packet.recalculate_checksums()
+
+        self.response.windivert.send(packet, recalculate_checksum=False)
+
+    def redirect_udp_response(self, packet: pydivert.Packet):
         """
         If the proxy responds to the client, let the client believe the target server sent the
         packets.
@@ -569,7 +664,8 @@ def redirect(**options):
     proxy = TransparentProxy(**options)
     proxy.start()
     print(f" * Redirection active.")
-    print(f"   Filter: {proxy.request_filter}")
+    print(f"   TCP Filter: {proxy.tcp_filter}")
+    print(f"   UDP Filter: {proxy.udp_filter}")
     try:
         while True:
             time.sleep(1)
